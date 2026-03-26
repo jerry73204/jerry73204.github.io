@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-e5ad8694.js";
+            window.path_to_searchindex_js = "searchindex-43cd1843.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-a768e378.js"></script>
@@ -4784,6 +4784,28 @@ semihosting-compatible <code>configASSERT()</code></li>
 </tbody>
 </table>
 </div>
+<h2 id="scheduling-configuration"><a class="header" href="#scheduling-configuration">Scheduling Configuration</a></h2>
+<p>Task priorities and stack sizes are configurable via <code>config.toml</code>:</p>
+<pre><code class="language-toml">[scheduling]
+app_priority = 12              # 0–31 normalized (12 = FreeRTOS pri 3)
+app_stack_bytes = 65536        # 64 KB
+zenoh_read_priority = 16       # 16 = FreeRTOS pri 4
+zenoh_read_stack_bytes = 5120
+zenoh_lease_priority = 16
+zenoh_lease_stack_bytes = 5120
+poll_priority = 16             # Network poll task
+poll_interval_ms = 5           # Poll every 5 ms
+</code></pre>
+<p>Omit <code>[scheduling]</code> entirely to use the defaults shown above.</p>
+<p>The normalized 0–31 scale maps linearly to FreeRTOS priorities 0–7
+(<code>configMAX_PRIORITIES = 8</code>). The mapping function:
+<code>freertos_pri = normalized * 7 / 31</code>.</p>
+<p><strong>Constraints</strong> – keep these for reliable operation:</p>
+<ul>
+<li><code>poll_priority ≥ zenoh_read_priority</code> – poll task must feed the RX FIFO</li>
+<li><code>zenoh_read_priority ≥ app_priority</code> – prevents lease timeouts</li>
+<li><code>app_stack_bytes ≥ 16384</code> – executor arena + zenoh-pico buffers (64 KB for actions)</li>
+</ul>
 <h2 id="status"><a class="header" href="#status">Status</a></h2>
 <p>FreeRTOS platform support (Phase 54) is complete. Phase 69 added C and C++
 examples with CMake cross-compilation, integration tests, and shared CMake
@@ -5775,6 +5797,49 @@ baudrate = 115200            # UART baud rate
 locator = "tcp/192.0.3.1:7447"  # Router address
 domain_id = 0                     # ROS 2 domain ID (0–232)
 </code></pre>
+<h2 id="scheduling"><a class="header" href="#scheduling">Scheduling</a></h2>
+<p>The <code>[scheduling]</code> section configures RTOS task priorities and stack sizes.
+All fields are optional — omit the entire section to use board defaults.</p>
+<pre><code class="language-toml">[scheduling]
+# Normalized 0–31 priority scale (higher = more important).
+# Board crate maps to platform-native range:
+#   FreeRTOS: 0–7, ThreadX: 31–0 (inverted), NuttX: POSIX nice
+app_priority = 12              # Application task (executor + callbacks)
+zenoh_read_priority = 16       # Zenoh-pico socket read task
+zenoh_lease_priority = 16      # Zenoh-pico session keep-alive task
+poll_priority = 16             # Network poll task (FreeRTOS only)
+
+# Stack sizes in bytes
+app_stack_bytes = 65536        # 64 KB (must fit executor arena)
+zenoh_read_stack_bytes = 5120
+zenoh_lease_stack_bytes = 5120
+
+# Platform-specific
+poll_interval_ms = 5           # Network poll interval (FreeRTOS only)
+</code></pre>
+<h3 id="priority-scale"><a class="header" href="#priority-scale">Priority Scale</a></h3>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Normalized</th><th>Meaning</th><th>FreeRTOS (0–7)</th><th>ThreadX (0–31)</th></tr>
+</thead>
+<tbody>
+<tr><td>0</td><td>Idle</td><td>0</td><td>31</td></tr>
+<tr><td>8</td><td>Below normal</td><td>2</td><td>20</td></tr>
+<tr><td>12</td><td><strong>Normal (default app)</strong></td><td>3</td><td>16</td></tr>
+<tr><td>16</td><td><strong>Above normal (default zenoh)</strong></td><td>4</td><td>12</td></tr>
+<tr><td>24</td><td>Very high</td><td>6</td><td>4</td></tr>
+<tr><td>31</td><td>Critical</td><td>7</td><td>0</td></tr>
+</tbody>
+</table>
+</div>
+<h3 id="scheduling-constraints"><a class="header" href="#scheduling-constraints">Scheduling Constraints</a></h3>
+<p>These should hold for correct operation:</p>
+<ol>
+<li><strong>poll ≥ zenoh read</strong> (FreeRTOS): poll task must feed the RX FIFO</li>
+<li><strong>zenoh read ≥ app</strong>: prevents lease timeouts from delayed message processing</li>
+<li><strong>app stack ≥ 16 KB</strong>: executor arena + zenoh-pico call depth; 64 KB for actions</li>
+</ol>
 <p>All sections and fields are optional — missing values use board-specific
 defaults.</p>
 <h2 id="per-platform-fields"><a class="header" href="#per-platform-fields">Per-Platform Fields</a></h2>
@@ -5801,6 +5866,9 @@ defaults.</p>
 <p>NuttX doesn’t need <code>mac</code> because the kernel configures networking.
 FreeRTOS uses <code>netmask</code> (dotted quad) instead of <code>prefix</code> (integer).
 ESP32 uses DHCP by default; <code>[network]</code> fields enable static IP mode.</p>
+<p><code>[scheduling]</code> fields are parsed on all platforms but only FreeRTOS
+currently uses them to configure task creation. Other platforms ignore
+the values (zenoh-pico read/lease tasks use platform defaults).</p>
 <h2 id="how-it-works-1"><a class="header" href="#how-it-works-1">How It Works</a></h2>
 <h3 id="rust-examples"><a class="header" href="#rust-examples">Rust examples</a></h3>
 <p>The config file is embedded at compile time via <code>include_str!</code> and parsed
